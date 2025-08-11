@@ -8,9 +8,12 @@ class SearchTool:
         if not self.api_key:
             raise ValueError("未设置SERPAPI_KEY环境变量")
 
-    def search(self, query: str, num_results: int = 2) -> List[Dict]:
+    def search(self, query: str, num_results: int = 3) -> List[Dict]:
         """执行搜索并返回结构化结果"""
         try:
+            # 使用配置中的结果数量，如果没有则默认为2
+            num_results = settings.SEARCH_RESULT_COUNT or num_results 
+            
             params = {
                 "engine": "google",
                 "q": query,
@@ -44,4 +47,4 @@ class SearchTool:
                     "snippet": item.get("snippet", ""),
                 })
                 
-        return results[:3]  # 只返回前3条结果 
+        return results[:settings.SEARCH_RESULT_COUNT]  # 使用配置中的数量限制结果 

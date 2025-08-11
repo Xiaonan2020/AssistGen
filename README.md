@@ -1,107 +1,113 @@
-# DSAgentChat
+# AssistGen - 基于大语言模型构建的智能客服系统
 
-一个基于 Deepseek V3 & R1 构建的 Agent 对话式应用服务
+一个基于 FastAPI 和 Vue 3 构建的前后端分离的智能客服助手项目，支持多种大语言模型，如DeepSeek V3，Qwen2.5系列，Llama3系列等。涵盖了 Agent、RAG 在智能客服领域的主流应用落地需求场景。 
+
+## 功能特性
+
+### 1. 通用问答能力
+- **支持 DeepSeek V3 在线API**
+- **支持 使用 Ollama 接入任意对话模型，如Qwen2.5系列，Llama3系列**
+- **灵活的模配置**
+
+### 2. 深度思考能力
+- **支持 DeepSeek R1 在线API**
+- **支持 使用 Ollama 接入任意 Deepseek r1 模型系列**
+- **灵活的模配置**
 
 
-## 环境要求
+### 3. ollama 性能测试工具
+- 单请求性能测试
+- 并发性能测试
+- 系统资源监控
+- 自动化测试报告
 
-- Python 3.11+
-- Ollama (可选，如果需要使用本地模型)
+## 快速启动
 
-## 安装步骤
+### 1. 安装依赖
 
-1. 创建并激活虚拟环境
 ```bash
+# 创建虚拟环境
 python -m venv .venv
 
-# 如果是Windows操作系统
-
-# 更改执行策略：
-Set-ExecutionPolicy RemoteSigned
-
 # 激活虚拟环境
+# Windows
 .venv\Scripts\activate
-
-# 如果是 Linux/Mac 操作系统
+# Linux/Mac
 source .venv/bin/activate
-```
 
-2. 安装依赖
-```bash
+# 安装依赖
 pip install -r requirements.txt
 ```
 
-4. 创建配置文件
-```bash
-# 复制示例配置文件，注意， .env 文件需要放在 llm_backend 目录下
-cp .env.example .env
-```
+### 2. 配置环境变量
 
-## 配置说明
-
-创建 `.env` 文件并配置以下内容：
+复制 `env.example` 文件到 `llm_backend/.env` 文件中，并根据实际情况修改配置：
 
 ```env
-# Deepseek settings
+# LLM 服务配置
+CHAT_SERVICE=OLLAMA  # 或 DEEPSEEK
+REASON_SERVICE=OLLAMA  # 或 DEEPSEEK
+
+# Ollama 配置
+OLLAMA_BASE_URL=http://localhost:11434
+OLLAMA_CHAT_MODEL=deepseek-coder:6.7b
+OLLAMA_REASON_MODEL=deepseek-coder:6.7b
+
+# DeepSeek 配置（如果使用）
 DEEPSEEK_API_KEY=your-api-key
 DEEPSEEK_BASE_URL=https://api.deepseek.com/v1
-
-# Ollama settings
-OLLAMA_BASE_URL=http://localhost:11434
-OLLAMA_CHAT_MODEL=qwen2.5:1.5b
-OLLAMA_REASON_MODEL=deepseek-r1:32b
-
-# Service selection (deepseek or ollama)
-CHAT_SERVICE=deepseek
-REASON_SERVICE=ollama
-
-# SerpAPI 配置 (搜索增强) , 本期代码没有使用，可以忽略，会在第四期项目中介绍联网检索功能，但需要写上该配置
-SERPAPI_KEY=your-serpapi-key
+DEEPSEEK_MODEL=deepseek-chat
 ```
+### 3. 安装Mysql数据库并在 `.env` 文件中配置数据库连接信息
 
-配置说明：
-- `DEEPSEEK_API_KEY`: Deepseek API 密钥
-- `DEEPSEEK_BASE_URL`: Deepseek API 地址
-- `OLLAMA_BASE_URL`: Ollama 服务地址
-- `OLLAMA_CHAT_MODEL`: Ollama 聊天模型名称
-- `OLLAMA_REASON_MODEL`: Ollama 推理模型名称
-- `CHAT_SERVICE`: 聊天服务类型 (deepseek 或 ollama)
-- `REASON_SERVICE`: 推理服务类型 (deepseek 或 ollama)
-
-## 启动服务
+### 4. 启动服务
 
 ```bash
+# 进入后端目录
 cd llm_backend
-# 开发模式
-uvicorn main:app --reload --port 8000
 
-# 生产模式
-uvicorn main:app --host 0.0.0.0 --port 8000
+# 启动服务（默认端口 9000）
+python run.py
+
+# 如果需要修改 IP 和端口，编辑 run.py 中的配置：
+uvicorn.run(
+    "main:app",
+    host="0.0.0.0",  # 修改监听地址
+    port=8000,       # 修改端口号
+    access_log=False,
+    log_level="error",
+    reload=True
+)
 ```
 
-服务启动后访问：
-- 前端页面：http://localhost:8000/
+服务启动后可以访问：
 - API 文档：http://localhost:8000/docs
-- 健康检查：http://localhost:8000/health
+- 前端界面：http://localhost:8000
 
+## 技术栈
 
-## 前端项目
+- 后端：
+  - FastAPI
+  - SQLAlchemy
+  - MySQL
+  - Ollama/DeepSeek
 
-本项目配套的前端实现请参考：[My-DeepSeek-Web](https://github.com/MuYuCheney/My-DeepSeek-Web)
-
-前端项目提供了完整的用户界面，支持：
-- 智能对话
-- Markdown 渲染
-- 代码高亮
-- 流式输出
-- 聊天记录
+- 前端：
+  - Vue 3
+  - Element Plus
+  - TypeScript
 
 ## 注意事项
 
-1. `.env` 文件包含敏感信息，已添加到 `.gitignore`，不会上传到代码仓库
-2. `.venv` 虚拟环境目录也已添加到 `.gitignore`
-3. 使用 Ollama 时需要确保 Ollama 服务已启动且可访问
-4. 建议在生产环境中配置 CORS 和安全设置
+1. 生产环境部署时：
+   - 修改 `.env` 中的 `SECRET_KEY`
+   - 配置正确的 CORS 设置
+   - 使用 HTTPS
+   - 关闭 `reload=True`
+
+2. 开发环境：
+   - 可以启用 `reload=True` 实现热重载
+   - 可以设置 `log_level="debug"` 查看更多日志
 
 ## License
 

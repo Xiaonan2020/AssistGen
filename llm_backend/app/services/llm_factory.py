@@ -8,14 +8,18 @@ class LLMFactory:
     def create_chat_service():
         """创建聊天服务"""
         if settings.CHAT_SERVICE == ServiceType.DEEPSEEK:
+            # 如果.env文件中CHAT_SERVICE设置为DEEPSEEK，则使用DeepseekService
             return DeepseekService()
         else:
+            # 否则使用OllamaService
             return OllamaService(model=settings.OLLAMA_CHAT_MODEL)
 
     @staticmethod
     def create_reasoner_service():
         """创建推理服务"""
+        # 如果.env文件中REASON_SERVICE设置为DEEPSEEK，则使用DeepseekService
         if settings.REASON_SERVICE == ServiceType.DEEPSEEK:
             return DeepseekService()
         else:
-            return OllamaService(model=settings.OLLAMA_REASON_MODEL) 
+            # 否则使用OllamaService
+            return OllamaService(model=settings.OLLAMA_REASON_MODEL)
