@@ -1,4 +1,4 @@
-from fastapi import FastAPI, HTTPException, UploadFile, File
+from fastapi import FastAPI, HTTPException, UploadFile, File, Query
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import StreamingResponse
 from pydantic import BaseModel
@@ -15,6 +15,11 @@ from app.core.logger import get_logger, log_structured
 from app.core.middleware import LoggingMiddleware
 from app.core.config import settings
 from app.api import api_router
+from app.core.database import AsyncSessionLocal
+from app.models.conversation import Conversation, DialogueType
+from app.models.message import Message
+from sqlalchemy import select
+from app.services.conversation_service import ConversationService
 
 
 # 配置上传目录 - RAG 功能的
@@ -45,46 +50,61 @@ app.include_router(api_router, prefix="/api")
 
 class ReasonRequest(BaseModel):
     messages: List[Dict[str, str]]
+    user_id: int
 
 class ChatMessage(BaseModel):
     messages: List[Dict[str, str]]
+    user_id: int
+    conversation_id: int  # 添加会话ID字段
 
 class RAGChatRequest(BaseModel):
     messages: List[Dict[str, str]]
     index_id: str
+    user_id: int
 
-@app.post("/chat")
+class CreateConversationRequest(BaseModel):
+    user_id: int
+
+
+@app.post("/api/conversations")
+async def create_conversation(request: CreateConversationRequest):
+    """创建新会话"""
+    try:
+        conversation_id = await ConversationService.create_conversation(request.user_id)
+        return {"conversation_id": conversation_id}
+    except Exception as e:
+        logger.error(f"Error creating conversation: {str(e)}", exc_info=True)
+        raise HTTPException(status_code=500, detail=str(e))
+
+@app.post("/api/chat")
 async def chat_endpoint(request: ChatMessage):
     """聊天接口"""
     try:
-        logger.info("Processing chat request")
+        logger.info(f"Processing chat request for user {request.user_id} in conversation {request.conversation_id}")
         chat_service = LLMFactory.create_chat_service()
         
-        log_structured("chat_request", {
-            "message_count": len(request.messages),
-            "last_message": request.messages[-1]["content"][:100] + "..."
-        })
-        
-        # 默认情况下， FastAPI使用JSONResponse返回响应。
-        # 要返回流式响应，请使用StreamingResponse: 将生成器函数传递给StreamingResponse ，然后将其返回。
-        # FastAPI 官方详细文档：https://fastapi.tiangolo.com/advanced/custom-response/#redirectresponse
         return StreamingResponse(
-            chat_service.generate_stream(request.messages),
+            chat_service.generate_stream(
+                messages=request.messages,
+                user_id=request.user_id,
+                conversation_id=request.conversation_id,
+                on_complete=ConversationService.save_message
+            ),
             media_type="text/event-stream"
         )
-    
     except Exception as e:
-        logger.error(f"Chat error: {str(e)}", exc_info=True)  # exc_info=True 用于在记录错误时提供详细的错误信息
+        logger.error(f"Chat error: {str(e)}", exc_info=True)
         raise HTTPException(status_code=500, detail=str(e))
 
 @app.post("/reason")
 async def reason_endpoint(request: ReasonRequest):
     """推理接口"""
     try:
-        logger.info("Processing reasoning request")
+        logger.info(f"Processing reasoning request for user {request.user_id}")
         reasoner = LLMFactory.create_reasoner_service()
         
         log_structured("reason_request", {
+            "user_id": request.user_id,
             "message_count": len(request.messages),
             "last_message": request.messages[-1]["content"][:100] + "..."
         })
@@ -95,7 +115,7 @@ async def reason_endpoint(request: ReasonRequest):
         )
     
     except Exception as e:
-        logger.error(f"Reasoning error: {str(e)}", exc_info=True)  # exc_info=True 用于在记录错误时提供详细的错误信息
+        logger.error(f"Reasoning error for user {request.user_id}: {str(e)}", exc_info=True)
         raise HTTPException(status_code=500, detail=str(e))
 
 @app.post("/search")
@@ -172,6 +192,7 @@ async def upload_file(file: UploadFile = File(...)):
 async def rag_chat_endpoint(request: RAGChatRequest):
     """基于文档的问答接口"""
     try:
+        logger.info(f"Processing RAG chat request for user {request.user_id}")
         rag_chat_service = RAGChatService()
         
         return StreamingResponse(
@@ -182,12 +203,35 @@ async def rag_chat_endpoint(request: RAGChatRequest):
             media_type="text/event-stream"
         )
     except Exception as e:
+        logger.error(f"RAG chat error for user {request.user_id}: {str(e)}", exc_info=True)
         raise HTTPException(status_code=500, detail=str(e))
 
 
 @app.get("/health")
 async def health_check():
     return {"status": "ok"}
+
+@app.get("/api/conversations/user/{user_id}")
+async def get_user_conversations(user_id: int):
+    """获取用户的所有会话"""
+    try:
+        conversations = await ConversationService.get_user_conversations(user_id)
+        return conversations
+    except Exception as e:
+        logger.error(f"Error getting conversations: {str(e)}", exc_info=True)
+        raise HTTPException(status_code=500, detail=str(e))
+
+@app.get("/api/conversations/{conversation_id}/messages")
+async def get_conversation_messages(conversation_id: int, user_id: int):
+    """获取会话的所有消息"""
+    try:
+        messages = await ConversationService.get_conversation_messages(conversation_id, user_id)
+        return messages
+    except ValueError as e:
+        raise HTTPException(status_code=404, detail=str(e))
+    except Exception as e:
+        logger.error(f"Error getting messages: {str(e)}", exc_info=True)
+        raise HTTPException(status_code=500, detail=str(e))
 
 # 最后挂载静态文件，并确保使用绝对路径
 STATIC_DIR = Path(__file__).parent / "static" / "dist"
