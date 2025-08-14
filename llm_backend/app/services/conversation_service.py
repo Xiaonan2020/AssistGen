@@ -20,6 +20,29 @@ class ConversationService:
     async def create_conversation(user_id: int) -> int:
         """创建新会话"""
         async with AsyncSessionLocal() as db:
+            # 先检查是否有未使用的新会话
+            stmt = select(Conversation).where(
+                Conversation.user_id == user_id,
+                Conversation.title == "新会话"
+            ).order_by(Conversation.created_at.desc())
+            
+            result = await db.execute(stmt)
+            existing_conversation = result.scalar_one_or_none()
+            
+            # 检查这个会话是否有消息
+            if existing_conversation:
+                stmt = select(Message).where(
+                    Message.conversation_id == existing_conversation.id
+                )
+                result = await db.execute(stmt)
+                messages = result.scalars().all()
+                
+                # 如果找到未使用的新会话，直接返回它的 ID
+                if not messages:
+                    logger.info(f"Found unused new conversation {existing_conversation.id} for user {user_id}")
+                    return existing_conversation.id
+            
+            # 如果没有未使用的新会话，创建一个新的
             conversation = Conversation(
                 user_id=user_id,
                 title="新会话",
@@ -153,4 +176,48 @@ class ConversationService:
                 
         except Exception as e:
             logger.error(f"Error getting messages for conversation {conversation_id}: {str(e)}", exc_info=True)
+            raise
+
+    @staticmethod
+    async def delete_conversation(conversation_id: int):
+        """删除会话及其所有消息"""
+        try:
+            async with AsyncSessionLocal() as db:
+                # 查询会话
+                stmt = select(Conversation).where(Conversation.id == conversation_id)
+                result = await db.execute(stmt)
+                conversation = result.scalar_one_or_none()
+                
+                if not conversation:
+                    raise ValueError(f"Conversation {conversation_id} not found")
+                
+                # 删除会话(会自动级联删除相关消息)
+                await db.delete(conversation)
+                await db.commit()
+                
+                logger.info(f"已删除会话 {conversation_id} 及其所有消息")
+        except Exception as e:
+            logger.error(f"删除会话失败: {str(e)}", exc_info=True)
+            raise
+
+    @staticmethod
+    async def update_conversation_name(conversation_id: int, name: str):
+        """更新会话名称"""
+        try:
+            async with AsyncSessionLocal() as db:
+                # 查询会话
+                stmt = select(Conversation).where(Conversation.id == conversation_id)
+                result = await db.execute(stmt)
+                conversation = result.scalar_one_or_none()
+                
+                if not conversation:
+                    raise ValueError(f"Conversation {conversation_id} not found")
+                
+                # 更新名称
+                conversation.title = name
+                await db.commit()
+                
+                logger.info(f"已更新会话 {conversation_id} 的名称为 {name}")
+        except Exception as e:
+            logger.error(f"更新会话名称失败: {str(e)}", exc_info=True)
             raise 

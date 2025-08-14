@@ -65,16 +65,8 @@ class RAGChatRequest(BaseModel):
 class CreateConversationRequest(BaseModel):
     user_id: int
 
-
-@app.post("/api/conversations")
-async def create_conversation(request: CreateConversationRequest):
-    """创建新会话"""
-    try:
-        conversation_id = await ConversationService.create_conversation(request.user_id)
-        return {"conversation_id": conversation_id}
-    except Exception as e:
-        logger.error(f"Error creating conversation: {str(e)}", exc_info=True)
-        raise HTTPException(status_code=500, detail=str(e))
+class UpdateConversationNameRequest(BaseModel):
+    name: str
 
 @app.post("/api/chat")
 async def chat_endpoint(request: ChatMessage):
@@ -96,7 +88,7 @@ async def chat_endpoint(request: ChatMessage):
         logger.error(f"Chat error: {str(e)}", exc_info=True)
         raise HTTPException(status_code=500, detail=str(e))
 
-@app.post("/reason")
+@app.post("/api/reason")
 async def reason_endpoint(request: ReasonRequest):
     """推理接口"""
     try:
@@ -118,13 +110,20 @@ async def reason_endpoint(request: ReasonRequest):
         logger.error(f"Reasoning error for user {request.user_id}: {str(e)}", exc_info=True)
         raise HTTPException(status_code=500, detail=str(e))
 
-@app.post("/search")
+@app.post("/api/search")
 async def search_endpoint(request: ChatMessage):
     """带搜索功能的聊天接口"""
     try:
-        search_service = SearchService()
+        logger.info(f"Processing search request for user {request.user_id} in conversation {request.conversation_id}")
+        logger.info(f"Request: {request}")
+        search_service = LLMFactory.create_search_service()
         return StreamingResponse(
-            search_service.generate_stream(request.messages[0]["content"]),
+            search_service.generate_stream(
+                query=request.messages[0]["content"],
+                user_id=request.user_id,
+                conversation_id=request.conversation_id,
+                on_complete=ConversationService.save_message
+            ),
             media_type="text/event-stream"
         )
     
@@ -211,6 +210,18 @@ async def rag_chat_endpoint(request: RAGChatRequest):
 async def health_check():
     return {"status": "ok"}
 
+
+@app.post("/api/conversations")
+async def create_conversation(request: CreateConversationRequest):
+    """创建新会话"""
+    try:
+        conversation_id = await ConversationService.create_conversation(request.user_id)
+        return {"conversation_id": conversation_id}
+    except Exception as e:
+        logger.error(f"Error creating conversation: {str(e)}", exc_info=True)
+        raise HTTPException(status_code=500, detail=str(e))
+
+
 @app.get("/api/conversations/user/{user_id}")
 async def get_user_conversations(user_id: int):
     """获取用户的所有会话"""
@@ -231,6 +242,31 @@ async def get_conversation_messages(conversation_id: int, user_id: int):
         raise HTTPException(status_code=404, detail=str(e))
     except Exception as e:
         logger.error(f"Error getting messages: {str(e)}", exc_info=True)
+        raise HTTPException(status_code=500, detail=str(e))
+
+@app.delete("/api/conversations/{conversation_id}")
+async def delete_conversation(conversation_id: int):
+    """删除会话及其所有消息"""
+    try:
+        conversation_service = ConversationService()
+        await conversation_service.delete_conversation(conversation_id)
+        return {"message": "会话已删除"}
+    except Exception as e:
+        logger.error(f"删除会话失败: {str(e)}", exc_info=True)
+        raise HTTPException(status_code=500, detail=str(e))
+
+@app.put("/api/conversations/{conversation_id}/name")
+async def update_conversation_name(
+    conversation_id: int,
+    request: UpdateConversationNameRequest
+):
+    """修改会话名称"""
+    try:
+        conversation_service = ConversationService()
+        await conversation_service.update_conversation_name(conversation_id, request.name)
+        return {"message": "会话名称已更新"}
+    except Exception as e:
+        logger.error(f"更新会话名称失败: {str(e)}", exc_info=True)
         raise HTTPException(status_code=500, detail=str(e))
 
 # 最后挂载静态文件，并确保使用绝对路径

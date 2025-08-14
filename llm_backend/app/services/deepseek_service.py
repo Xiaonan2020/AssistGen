@@ -66,12 +66,13 @@ class DeepseekService:
                 messages=messages,
                 stream=True
             )
-            
+
             async for chunk in response:
                 if chunk.choices and chunk.choices[0].delta.content:
-                    content = chunk.choices[0].delta.content
-                    full_response.append(content)
-                    yield f"data: {json.dumps(content, ensure_ascii=False)}\n\n"
+                    # 使用 ensure_ascii=False 来保持中文字符
+                    full_response.append(chunk.choices[0].delta.content)
+                    content = json.dumps(chunk.choices[0].delta.content, ensure_ascii=False)
+                    yield f"data: {content}\n\n"
             
             # 完整响应
             complete_response = "".join(full_response)

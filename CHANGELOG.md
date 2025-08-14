@@ -5,6 +5,27 @@
 
 ## [v3.0] - 【AssistGen】
 ### 基础知识
+- DeepSeek Function Calling 工具调用
+
+
+### 功能版本
+- 用户历史会话记录管理
+  - 会话删除
+  - 会话名称修改
+
+
+### 功能优化
+- 问答/深度思考接口增加user_id、conversation_id参数
+- 问答/深度思考接口增加回调机制
+- 问答/深度思考接口增加redis上下文缓存管理
+
+### 问题修复
+- 解决 init_db.py脚本异步运行问题
+
+
+
+## [v3.0] - 【AssistGen】
+### 基础知识
 - DeepSeek API 硬盘上下文缓存 
 - Redis 内存数据库安装及启动方法
 - 基于 Redis 的Prompt cache缓存管理

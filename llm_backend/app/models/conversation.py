@@ -2,6 +2,9 @@ from sqlalchemy import Column, Integer, String, DateTime, ForeignKey, func, Enum
 from sqlalchemy.orm import relationship
 from app.core.database import Base
 import enum
+from app.core.logger import get_logger
+
+logger = get_logger(service="conversation")
 
 class DialogueType(enum.Enum):
     NORMAL = "普通对话"
