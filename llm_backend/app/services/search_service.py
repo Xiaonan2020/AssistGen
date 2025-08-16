@@ -7,7 +7,7 @@ from app.core.config import settings
 from app.core.logger import get_logger
 from app.tools.definitions import SEARCH_TOOL, TOOL_DEFINITIONS
 from app.services.function_tools import ToolRegistry, FunctionTool
-from app.prompts.search_prompts import SEARCH_SYSTEM_PROMPT, SEARCH_SUMMARY_PROMPT
+from app.prompts.search_prompts import SEARCH_SYSTEM_PROMPT, SEARCH_SUMMARY_PROMPT, format_search_context
 from datetime import datetime
 
 logger = get_logger(service="search")
@@ -69,6 +69,8 @@ class SearchService:
         """调用模型并获取工具调用结果"""
         try:
             logger.info(f"Calling model with query: {query}")
+            
+
             logger.info(f"Messages: {query}")
             
             response = await self.client.chat.completions.create(

@@ -1,16 +1,14 @@
-from fastapi import FastAPI, HTTPException, UploadFile, File, Query
+from fastapi import FastAPI, HTTPException, UploadFile, File, Query, Form
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import StreamingResponse
 from pydantic import BaseModel
-from typing import List, Dict
+from typing import List, Dict, Optional
 from app.services.llm_factory import LLMFactory
 from app.services.search_service import SearchService
-
 from fastapi.staticfiles import StaticFiles
 from datetime import datetime
 from pathlib import Path
-from app.services.rag_service import RAGService
-from app.services.rag_chat_service import RAGChatService
+
 from app.core.logger import get_logger, log_structured
 from app.core.middleware import LoggingMiddleware
 from app.core.config import settings
@@ -20,6 +18,15 @@ from app.models.conversation import Conversation, DialogueType
 from app.models.message import Message
 from sqlalchemy import select
 from app.services.conversation_service import ConversationService
+import uuid
+import os
+from app.services.indexing_service import IndexingService
+import sys
+from app.lg_agent.lg_states import AgentState, InputState
+from app.lg_agent.utils import new_uuid
+from app.lg_agent.lg_builder import graph
+from langgraph.types import Command
+import json
 
 
 # 配置上传目录 - RAG 功能的
@@ -67,6 +74,22 @@ class CreateConversationRequest(BaseModel):
 
 class UpdateConversationNameRequest(BaseModel):
     name: str
+
+class LangGraphRequest(BaseModel):
+    query: str
+    user_id: int
+    conversation_id: Optional[str] = None
+    image: Optional[UploadFile] = None
+
+class LangGraphResumeRequest(BaseModel):
+    query: str
+    user_id: int
+    conversation_id: str
+
+
+@app.get("/health")
+async def health_check():
+    return {"status": "ok"}
 
 @app.post("/api/chat")
 async def chat_endpoint(request: ChatMessage):
@@ -122,7 +145,7 @@ async def search_endpoint(request: ChatMessage):
                 query=request.messages[0]["content"],
                 user_id=request.user_id,
                 conversation_id=request.conversation_id,
-                on_complete=ConversationService.save_message
+                # on_complete=ConversationService.save_message
             ),
             media_type="text/event-stream"
         )
@@ -130,62 +153,59 @@ async def search_endpoint(request: ChatMessage):
     except Exception as e:
         raise HTTPException(status_code=500, detail=str(e))
 
-
-@app.post("/upload")
-async def upload_file(file: UploadFile = File(...)):
+@app.post("/api/upload")
+async def upload_file(
+    file: UploadFile = File(...),
+    user_id: int = Form(...)
+):
     """上传文件并准备 RAG 处理"""
     try:
-        logger.info(f"Uploading file: {file.filename}")
-        # 生成唯一的文件名
-        timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
-        filename = f"{timestamp}_{file.filename}"
-        file_path = UPLOAD_DIR / filename
+        logger.info(f"Uploading file for user {user_id}: {file.filename}")
         
-        # 确保上传目录存在
-        UPLOAD_DIR.mkdir(exist_ok=True)
+        # 1. 创建基于UUID的一级目录
+        user_uuid = str(uuid.uuid5(uuid.NAMESPACE_DNS, f"user_{user_id}"))
+        first_level_dir = UPLOAD_DIR / user_uuid
+        
+        # 2. 创建基于时间戳的二级目录
+        timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
+        second_level_dir = first_level_dir / timestamp
+        second_level_dir.mkdir(parents=True, exist_ok=True)
+        
+        # 3. 生成带时间戳的文件名
+        original_name, ext = os.path.splitext(file.filename)
+        new_filename = f"{original_name}_{timestamp}{ext}"
+        file_path = second_level_dir / new_filename
         
         # 保存文件
         content = await file.read()
         with open(file_path, "wb") as f:
             f.write(content)
             
-        # 获取文件类型
-        file_type = file.content_type
-        file_ext = Path(file.filename).suffix.lower()
-        
-        # 返回文件信息
+        # 获取文件信息
         file_info = {
-            "filename": filename,
+            "filename": new_filename,
             "original_name": file.filename,
             "size": len(content),
-            "type": file_type,
-            "path": str(file_path).replace('\\', '/'),  # 使用正斜杠
+            "type": file.content_type,
+            "path": str(file_path).replace('\\', '/'),
+            "user_id": user_id,
+            "user_uuid": user_uuid,
+            "upload_time": timestamp,
+            "directory": str(second_level_dir)
         }
         
-        print(f"文件已保存到: {file_path}")  # 添加日志
-        
-
-                # 初始化 RAG 服务
-        rag_service = RAGService()
-        # 初始化 RAG 处理
-        rag_result = await rag_service.process_file(file_info)
+        # 4. 处理文件索引
+        indexing_service = IndexingService()
+        index_result = await indexing_service.process_file(file_info)
         
         # 合并结果
-        result = {**file_info, **rag_result}
-        
-        log_structured("file_upload", {
-            "filename": file.filename,
-            "size": len(content),
-            "type": file_type
-        })
+        result = {**file_info, "index_result": index_result}
         
         return result
         
     except Exception as e:
-        logger.error(f"Upload failed: {str(e)}", exc_info=True)
-        return {"error": str(e)}
-    
-    return f"data: {result}\n\n"
+        logger.error(f"Upload failed for user {user_id}: {str(e)}", exc_info=True)
+        raise HTTPException(status_code=500, detail=str(e))
 
 @app.post("/chat-rag")
 async def rag_chat_endpoint(request: RAGChatRequest):
@@ -205,12 +225,6 @@ async def rag_chat_endpoint(request: RAGChatRequest):
         logger.error(f"RAG chat error for user {request.user_id}: {str(e)}", exc_info=True)
         raise HTTPException(status_code=500, detail=str(e))
 
-
-@app.get("/health")
-async def health_check():
-    return {"status": "ok"}
-
-
 @app.post("/api/conversations")
 async def create_conversation(request: CreateConversationRequest):
     """创建新会话"""
@@ -220,7 +234,6 @@ async def create_conversation(request: CreateConversationRequest):
     except Exception as e:
         logger.error(f"Error creating conversation: {str(e)}", exc_info=True)
         raise HTTPException(status_code=500, detail=str(e))
-
 
 @app.get("/api/conversations/user/{user_id}")
 async def get_user_conversations(user_id: int):
@@ -267,6 +280,206 @@ async def update_conversation_name(
         return {"message": "会话名称已更新"}
     except Exception as e:
         logger.error(f"更新会话名称失败: {str(e)}", exc_info=True)
+        raise HTTPException(status_code=500, detail=str(e))
+
+@app.post("/api/langgraph/query")
+async def langgraph_query(
+    query: str = Form(...),
+    user_id: int = Form(...),
+    conversation_id: Optional[str] = Form(None),
+    image: Optional[UploadFile] = File(None)
+):
+    """使用LangGraph处理用户查询，支持图片上传"""
+    try:
+        logger.info(f"Processing LangGraph query for user {user_id} and conversation {conversation_id}")
+        
+        # 处理图片上传
+        image_path = None
+        if image:
+            # 创建图片存储目录
+            image_dir = Path("uploads/images")
+            image_dir.mkdir(parents=True, exist_ok=True)
+            
+            # 生成带时间戳的文件名
+            timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
+            original_name, ext = os.path.splitext(image.filename)
+            new_filename = f"{original_name}_{timestamp}{ext}"
+            image_path = image_dir / new_filename
+            
+            # 保存图片
+            content = await image.read()
+            with open(image_path, "wb") as f:
+                f.write(content)
+            
+            logger.info(f"Saved image {new_filename} for user {user_id}")
+        
+        # 使用conversation_id作为thread_id，如果没有提供则创建新的
+        thread_id = conversation_id if conversation_id else new_uuid()
+        thread_config = {
+            "configurable": {
+                "thread_id": thread_id, 
+                "user_id": user_id,
+                "image_path": str(image_path) if image_path else None
+            }
+        }
+        
+        # 获取当前线程状态
+        state_history = None
+        try:
+            # 检查是否有现有的会话状态
+            if thread_id:
+                state_history = graph.get_state(thread_config)
+                if state_history:
+                    logger.info(f"Found existing conversation state for thread_id: {thread_id}")
+        except Exception as e:
+            logger.warning(f"Error retrieving state: {e}. Starting with fresh state.")
+        
+        # 准备输入状态 - 如果是现有会话，直接传入查询文本
+        if state_history and len(state_history) > 0 and len(state_history[-1]) > 0:
+            logger.info("Using existing conversation state")
+            # 如果有现有会话，使用resume命令继续对话
+            async def process_stream():
+                async for c, metadata in graph.astream(
+                    Command(resume=query), 
+                    stream_mode="messages", 
+                    config=thread_config
+                ):
+                    # 只处理最终展示给用户的内容，跳过中间工具调用和内部状态
+                    if c.content and "research_plan" not in metadata.get("tags", []) and not c.additional_kwargs.get("tool_calls"):
+                        # 关键修改：使用json.dumps处理content，确保特殊字符如换行符被正确处理
+                        content_json = json.dumps(c.content, ensure_ascii=False)
+                        yield f"data: {content_json}\n\n"
+                        
+                    # 工具调用单独处理，不发送给前端
+                    elif c.additional_kwargs.get("tool_calls"):
+                        tool_data = c.additional_kwargs.get("tool_calls")[0]["function"].get("arguments")
+                        logger.debug(f"Tool call: {tool_data}")
+                        
+                # 处理中断情况
+                state = graph.get_state(thread_config)
+                if len(state) > 0 and len(state[-1]) > 0:
+                    if len(state[-1][0].interrupts) > 0:
+                        interrupt_json = json.dumps({"interruption": True, "conversation_id": thread_id})
+                        yield f"data: {interrupt_json}\n\n"
+        else:
+            # 新会话或找不到现有状态，创建新的输入状态
+            logger.info("Creating new conversation state")
+            input_state = InputState(messages=query)
+            
+            # 流式处理查询
+            async def process_stream():
+                async for c, metadata in graph.astream(
+                    input=input_state, 
+                    stream_mode="messages", 
+                    config=thread_config
+                ):
+                    # 只处理最终展示给用户的内容，跳过中间工具调用和内部状态
+                    if c.content and "research_plan" not in metadata.get("tags", []) and not c.additional_kwargs.get("tool_calls"):
+                        # 关键修改：使用json.dumps处理content，确保特殊字符如换行符被正确处理
+                        content_json = json.dumps(c.content, ensure_ascii=False)
+                        yield f"data: {content_json}\n\n"
+                        
+                    # 工具调用单独处理，不发送给前端
+                    elif c.additional_kwargs.get("tool_calls"):
+                        tool_data = c.additional_kwargs.get("tool_calls")[0]["function"].get("arguments")
+                        logger.debug(f"Tool call: {tool_data}")
+                        
+                # 处理中断情况
+                state = graph.get_state(thread_config)
+                if len(state) > 0 and len(state[-1]) > 0:
+                    if len(state[-1][0].interrupts) > 0:
+                        interrupt_json = json.dumps({"interruption": True, "conversation_id": thread_id})
+                        yield f"data: {interrupt_json}\n\n"
+        
+        response = StreamingResponse(
+            process_stream(),
+            media_type="text/event-stream"
+        )
+        
+        # 添加会话ID到响应头，方便前端获取
+        response.headers["X-Conversation-ID"] = thread_id
+        
+        return response
+        
+    except Exception as e:
+        logger.error(f"LangGraph query error: {str(e)}", exc_info=True)
+        raise HTTPException(status_code=500, detail=str(e))
+
+@app.post("/api/langgraph/resume")
+async def langgraph_resume(request: LangGraphResumeRequest):
+    """继续执行LangGraph流程"""
+    try:
+        logger.info(f"Resuming LangGraph query for user {request.user_id} with conversation {request.conversation_id}")
+        
+        # 使用会话ID作为线程ID
+        thread_config = {"configurable": {"thread_id": request.conversation_id}}
+        
+        # 流式处理恢复
+        async def process_resume():
+            async for c, metadata in graph.astream(Command(resume=request.query), stream_mode="messages", config=thread_config):
+                # 只处理最终展示给用户的内容
+                if c.content and not c.additional_kwargs.get("tool_calls"):
+                    # 同样使用json.dumps处理内容
+                    content_json = json.dumps(c.content, ensure_ascii=False)
+                    yield f"data: {content_json}\n\n"
+                
+                # 工具调用单独处理，不发送给前端
+                elif c.additional_kwargs.get("tool_calls"):
+                    tool_data = c.additional_kwargs.get("tool_calls")[0]["function"].get("arguments")
+                    logger.debug(f"Tool call: {tool_data}")
+        
+        return StreamingResponse(
+            process_resume(),
+            media_type="text/event-stream"
+        )
+        
+    except Exception as e:
+        logger.error(f"LangGraph resume error: {str(e)}", exc_info=True)
+        raise HTTPException(status_code=500, detail=str(e))
+
+@app.post("/api/upload/image")
+async def upload_image(
+    image: UploadFile = File(...),
+    user_id: int = Form(...),
+    conversation_id: Optional[str] = Form(None)
+):
+    """上传图片并返回图片存储路径"""
+    try:
+        # 创建图片存储目录
+        image_dir = Path("uploads/images")
+        if conversation_id:
+            image_dir = image_dir / conversation_id
+        image_dir.mkdir(parents=True, exist_ok=True)
+        
+        # 生成带时间戳的文件名
+        timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
+        original_name, ext = os.path.splitext(image.filename)
+        new_filename = f"{original_name}_{timestamp}{ext}"
+        image_path = image_dir / new_filename
+        
+        # 保存图片
+        content = await image.read()
+        with open(image_path, "wb") as f:
+            f.write(content)
+        
+        # 获取图片信息
+        image_info = {
+            "filename": new_filename,
+            "original_name": image.filename,
+            "size": len(content),
+            "type": image.content_type,
+            "path": str(image_path).replace('\\', '/'),
+            "user_id": user_id,
+            "conversation_id": conversation_id,
+            "upload_time": timestamp
+        }
+        
+        logger.info(f"Image uploaded: {image_info}")
+        
+        return image_info
+        
+    except Exception as e:
+        logger.error(f"Image upload failed for user {user_id}: {str(e)}", exc_info=True)
         raise HTTPException(status_code=500, detail=str(e))
 
 # 最后挂载静态文件，并确保使用绝对路径

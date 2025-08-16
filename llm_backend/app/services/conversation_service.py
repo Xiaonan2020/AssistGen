@@ -20,29 +20,6 @@ class ConversationService:
     async def create_conversation(user_id: int) -> int:
         """创建新会话"""
         async with AsyncSessionLocal() as db:
-            # 先检查是否有未使用的新会话
-            stmt = select(Conversation).where(
-                Conversation.user_id == user_id,
-                Conversation.title == "新会话"
-            ).order_by(Conversation.created_at.desc())
-            
-            result = await db.execute(stmt)
-            existing_conversation = result.scalar_one_or_none()
-            
-            # 检查这个会话是否有消息
-            if existing_conversation:
-                stmt = select(Message).where(
-                    Message.conversation_id == existing_conversation.id
-                )
-                result = await db.execute(stmt)
-                messages = result.scalars().all()
-                
-                # 如果找到未使用的新会话，直接返回它的 ID
-                if not messages:
-                    logger.info(f"Found unused new conversation {existing_conversation.id} for user {user_id}")
-                    return existing_conversation.id
-            
-            # 如果没有未使用的新会话，创建一个新的
             conversation = Conversation(
                 user_id=user_id,
                 title="新会话",

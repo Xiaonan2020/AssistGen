@@ -24,3 +24,13 @@ email-validator>=1.1.3
 psutil>=7.0.0
 GPUtil>=1.4.0
 redis>=5.0.0
+langgraph==0.3.25
+langchain-deepseek==0.1.3
+langchain-ollama==0.3.0
+langchain_neo4j==0.4.0
+matplotlib==3.10.1
+seaborn==0.13.2
+langchain_community==0.3.21
+graphrag==2.1.0
+langgraph-checkpoint-sqlite==2.0.6
+ipython==9.1.0

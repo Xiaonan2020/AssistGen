@@ -38,3 +38,15 @@ SEARCH_SUMMARY_PROMPT = """# 以下内容是基于用户发送的消息的搜索
 
 用户问题：{query}"""
 
+def format_search_context(search_results: list, start_index: int = 1) -> str:
+    """格式化搜索结果为上下文"""
+    formatted_results = []
+    for i, result in enumerate(search_results, start=start_index):
+        formatted_results.append(
+            f"[webpage {i} begin]\n"
+            f"标题：{result['title']}\n"
+            f"链接：{result['url']}\n"
+            f"内容：{result['snippet']}\n"
+            f"[webpage {i} end]"
+        )
+    return "\n\n".join(formatted_results) 
